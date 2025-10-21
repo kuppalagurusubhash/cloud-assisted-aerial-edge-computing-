@@ -1,135 +1,177 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Drone Simulator Dashboard</title>
-
-    <!-- SocketIO -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-
-    <!-- Leaflet for map -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0; padding: 0;
-            background: #f0f2f5;
-        }
-        header {
-            background: #34495e;
-            color: white;
-            padding: 12px 20px;
-            text-align: center;
-        }
-        main {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-around;
-            padding: 15px;
-        }
-        .card {
-            background: white;
-            border-radius: 10px;
-            padding: 15px;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.2);
-            margin: 10px;
-        }
-        #video-container img {
-            max-width: 960px;
-            border-radius: 10px;
-        }
-        table {
-            border-collapse: collapse;
-            width: 100%;
-        }
-        th, td {
-            border: 1px solid #ddd;
-            padding: 6px;
-            text-align: center;
-        }
-        th {
-            background: #34495e;
-            color: white;
-        }
-        #map {
-            width: 100%;
-            height: 400px;
-            border-radius: 10px;
-        }
-    </style>
+<meta charset="UTF-8">
+<title>🚁 Aerial Multi-Drone Disaster Dashboard</title>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<style>
+  body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; }
+  header { background: linear-gradient(90deg, #10b981, #2563eb); color: white; text-align: center; padding: 18px; font-size: 1.6rem; font-weight: 600; }
+  main { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; padding: 20px; }
+  .card { background: #1e293b; border-radius: 12px; padding: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); transition: 0.3s; }
+  .card:hover { transform: translateY(-3px); }
+  #video-feed { width: 100%; border-radius: 10px; }
+  #map { height: 400px; border-radius: 10px; }
+  .chart-container { height: 250px; }
+  .alert { position: fixed; top: 20px; right: 20px; background: #ef4444; color: white; padding: 12px 18px; border-radius: 10px; display: none; box-shadow: 0 4px 15px rgba(239,68,68,0.4); font-weight: bold; z-index: 9999; }
+  .stat { display: flex; justify-content: space-around; background: #334155; border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+  .stat div { text-align: center; }
+  .stat-number { font-size: 1.3rem; font-weight: bold; color: #10b981; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
+  th, td { padding: 8px; text-align: center; border-bottom: 1px solid #334155; }
+  th { background: #10b981; color: #000; }
+  #history { max-height: 150px; overflow-y: auto; font-size: 0.85rem; }
+</style>
 </head>
 <body>
-<header>
-    <h1>Drone Simulator Dashboard</h1>
-</header>
+<header>🚁 Multi-Drone Disaster Response Dashboard</header>
+
 <main>
-    <div class="card" id="video-container">
-        <h2>Live Video with Detections</h2>
-        <img id="live-frame" src="" alt="Waiting for frames...">
+  <div>
+    <div class="card">
+      <h2>📹 Live Drone Feed</h2>
+      <img id="video-feed" src="" alt="Waiting for video..." />
+    </div>
+    <div class="card">
+      <h2>🗺️ Drone Map</h2>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>📡 Telemetry Overview</h2>
+      <div class="stat">
+        <div><div class="stat-number" id="altitude">--</div><div>Altitude (m)</div></div>
+        <div><div class="stat-number" id="speed">--</div><div>Speed (m/s)</div></div>
+        <div><div class="stat-number" id="battery">--%</div><div>Battery</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Drone</th><th>Lat</th><th>Lon</th><th>Alt</th><th>Speed</th><th>Battery</th></tr></thead>
+        <tbody id="telemetry-body"></tbody>
+      </table>
     </div>
 
-    <div class="card" id="telemetry-container">
-        <h2>Telemetry Table</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Frame ID</th>
-                    <th>Latitude</th>
-                    <th>Longitude</th>
-                    <th>Altitude</th>
-                    <th>Timestamp</th>
-                </tr>
-            </thead>
-            <tbody id="telemetry-body"></tbody>
-        </table>
+    <div class="card">
+      <h2>📈 Flight Charts</h2>
+      <div class="chart-container"><canvas id="altChart"></canvas></div>
+      <div class="chart-container"><canvas id="speedChart"></canvas></div>
+      <div class="chart-container"><canvas id="batteryChart"></canvas></div>
     </div>
 
-    <div class="card" id="map-container">
-        <h2>Drone Live Map</h2>
-        <div id="map"></div>
+    <div class="card">
+      <h2>📁 History Log</h2>
+      <div id="history"></div>
     </div>
+  </div>
 </main>
 
 <script>
-const socket = io({transports: ['websocket']});
+const socket = io({transports:['websocket']});
+let map, droneMarkers = {}, dronePaths = {}, lastPositions = {}, disasterMarker = null;
+const droneColors = ["#10b981","#3b82f6","#f59e0b","#ef4444","#8b5cf6"];
 
-// Initialize Leaflet map
-const map = L.map('map').setView([28.6139, 77.2090], 17); // starting at Delhi
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: 'Map data © OpenStreetMap contributors'
-}).addTo(map);
+// --- CHART SETUP ---
+const createChart = (id,label,color) => new Chart(document.getElementById(id).getContext('2d'),{
+  type:'line', data:{labels:[], datasets:[{label, data:[], borderColor: color, fill:false, tension:0.3}]},
+  options:{scales:{y:{beginAtZero:true}}, plugins:{legend:{display:true}}}
+});
+const altChart = createChart('altChart','Altitude (m)','#10b981');
+const speedChart = createChart('speedChart','Speed (m/s)','#3b82f6');
+const batteryChart = createChart('batteryChart','Battery (%)','#f59e0b');
 
-// Marker for drone
-let droneMarker = L.marker([28.6139, 77.2090]).addTo(map);
+// --- HELPER FUNCTIONS ---
+function updateChart(chart,val,label){
+  chart.data.labels.push(label); chart.data.datasets[0].data.push(val);
+  if(chart.data.labels.length>10){ chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
+  chart.update();
+}
 
-socket.on('connect', () => console.log("Connected to server"));
+function showToast(message){
+  const toast = document.createElement('div');
+  toast.className = 'alert'; toast.innerText = message;
+  document.body.appendChild(toast);
+  toast.style.display='block';
+  setTimeout(()=>{ toast.remove(); },4000);
+}
 
-socket.on('new_detection', data => {
-    // Update video
-    if (data.img) {
-        document.getElementById('live-frame').src = data.img + "?t=" + new Date().getTime();
-    }
+// Smooth movement using last known position
+function updateDroneMarker(drone_id, lat, lon){
+  const color = droneColors[Object.keys(droneMarkers).length % droneColors.length];
 
-    // Update telemetry table
-    const tbody = document.getElementById('telemetry-body');
-    const row = document.createElement('tr');
-    row.innerHTML = `
-        <td>${data.frame_id}</td>
-        <td>${data.telemetry.lat.toFixed(6)}</td>
-        <td>${data.telemetry.lon.toFixed(6)}</td>
-        <td>${data.telemetry.alt.toFixed(2)}</td>
-        <td>${new Date(data.timestamp*1000).toLocaleTimeString()}</td>
-    `;
-    tbody.prepend(row);
-    while (tbody.rows.length > 20) tbody.deleteRow(-1);
+  if(!droneMarkers[drone_id]){
+    const icon = L.divIcon({html:`<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid white"></div>`});
+    droneMarkers[drone_id] = L.marker([lat, lon], {icon}).addTo(map).bindPopup(drone_id);
+    lastPositions[drone_id] = [lat, lon];
+    dronePaths[drone_id] = L.polyline([[lat,lon]], {color: color}).addTo(map);
+  } else {
+    // interpolate position for smooth movement
+    const [prevLat, prevLon] = lastPositions[drone_id];
+    const smoothLat = prevLat + (lat - prevLat) * 0.3;
+    const smoothLon = prevLon + (lon - prevLon) * 0.3;
+    droneMarkers[drone_id].setLatLng([smoothLat, smoothLon]);
+    lastPositions[drone_id] = [smoothLat, smoothLon];
 
-    // Update map
-    if(data.telemetry.lat && data.telemetry.lon){
-        droneMarker.setLatLng([data.telemetry.lat, data.telemetry.lon]);
-        map.setView([data.telemetry.lat, data.telemetry.lon]);
-    }
+    // maintain only last 2 points in path
+    const path = dronePaths[drone_id].getLatLngs();
+    path.push([smoothLat, smoothLon]);
+    if(path.length>2) path.shift();
+    dronePaths[drone_id].setLatLngs(path);
+  }
+}
+
+// --- SOCKET EVENTS ---
+socket.on('connect', ()=>console.log("✅ Connected to server"));
+
+socket.on('new_detection', data=>{
+  const { telemetry, img, detections } = data;
+  const { lat, lon, alt, speed=0, battery=0, drone_id="Drone-1" } = telemetry;
+
+  if(img) document.getElementById('video-feed').src = img + "?t=" + Date.now();
+
+  if(!map){ map = L.map('map').setView([lat, lon], 15); 
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  }
+
+  updateDroneMarker(drone_id, lat, lon);
+
+  // telemetry display
+  document.getElementById('altitude').innerText = alt.toFixed(1);
+  document.getElementById('speed').innerText = speed.toFixed(1);
+  document.getElementById('battery').innerText = battery.toFixed(0) + "%";
+
+  // update telemetry table
+  const tbody = document.getElementById('telemetry-body');
+  const row = document.createElement('tr');
+  row.innerHTML = `<td>${drone_id}</td><td>${lat.toFixed(5)}</td><td>${lon.toFixed(5)}</td><td>${alt.toFixed(1)}</td><td>${speed.toFixed(1)}</td><td>${battery.toFixed(0)}%</td>`;
+  tbody.prepend(row); if(tbody.rows.length>10) tbody.deleteRow(-1);
+
+  const now = new Date().toLocaleTimeString();
+  updateChart(altChart,alt,now); updateChart(speedChart,speed,now); updateChart(batteryChart,battery,now);
+
+  const hist = document.getElementById('history');
+  const entry = document.createElement('div');
+  entry.innerText = `[${now}] ${drone_id} Alt:${alt.toFixed(1)}m Speed:${speed.toFixed(1)}m/s Bat:${battery.toFixed(0)}%`;
+  hist.prepend(entry); if(hist.children.length>10) hist.removeChild(hist.lastChild);
+
+  if(detections && detections.some(d=>d.class==="person")) showToast(`⚠️ Human Detected by ${drone_id}`);
+});
+
+socket.on('disaster_target', data=>{
+  if(disasterMarker) map.removeLayer(disasterMarker);
+  let color="#ff0000";
+  if(data.type==="Flood") color="#f59e0b";
+  if(data.type==="Storm") color="#facc15";
+  disasterMarker = L.circleMarker([data.lat,data.lon],{radius:12,color:color,fillColor:color,fillOpacity:0.7}).addTo(map).bindPopup(data.type);
+  showToast(`⚠️ Disaster: ${data.type} at lat:${data.lat.toFixed(5)}, lon:${data.lon.toFixed(5)}`);
+
+  const hist = document.getElementById('history');
+  const entry = document.createElement('div');
+  entry.innerText = `[${new Date().toLocaleTimeString()}] Disaster: ${data.type} at lat:${data.lat.toFixed(5)}, lon:${data.lon.toFixed(5)}`;
+  hist.prepend(entry); if(hist.children.length>20) hist.removeChild(hist.lastChild);
 });
 </script>
 </body>

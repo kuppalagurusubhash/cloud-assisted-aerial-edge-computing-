@@ -1,102 +1,121 @@
 # detector_client.py
-import os, time, json, base64
+import os, time, json, base64, cv2, numpy as np, random
 from ultralytics import YOLO
-import cv2
-import numpy as np
 import socketio
 
-FRAME_FOLDER = "frames_in"
-OUT_FOLDER = "frames_out"
-TELEMETRY_FILE = "telemetry.json"
-SERVER_URL = "http://localhost:5000"  # change if server remote
-MODEL_NAME = "yolov8n.pt"   # ultralytics model; download automatically on first run
-PERSON_CLASS_NAMES = ["person"]  # YOLO typical
+# ---------------- CONFIG ---------------- #
+FRAME_FOLDER = "frames_in"           # where raw frames are stored
+OUT_FOLDER = "frames_out"            # where YOLO overlay frames go
+SERVER_URL = "http://127.0.0.1:5001" # Flask-SocketIO server URL
+MODEL_NAME = "yolov8n.pt"            # Ultralytics YOLO model
+TARGET_CLASSES = ["person"]          # classes to detect
+# ---------------------------------------- #
 
 os.makedirs(OUT_FOLDER, exist_ok=True)
 
-# socketio client
-sio = socketio.Client(logger=False, engineio_logger=False)
-print("Connecting to server...", SERVER_URL)
+# SocketIO client
+sio = socketio.Client(reconnection=True)
+print(f"🌐 Connecting to {SERVER_URL} ...")
 sio.connect(SERVER_URL, namespaces=["/"])
-print("Connected")
+print("✅ Connected to Flask server")
 
+# Load YOLO model
 model = YOLO(MODEL_NAME)
-print("Model loaded:", MODEL_NAME)
+print(f"🤖 YOLO model loaded: {MODEL_NAME}")
 
-def latest_frame_path():
-    files = sorted([f for f in os.listdir(FRAME_FOLDER) if f.endswith(".jpg")])
-    return os.path.join(FRAME_FOLDER, files[-1]) if files else None
 
-last_sent = 0
-try:
-    while True:
-        frame_path = latest_frame_path()
-        if frame_path is None:
-            time.sleep(0.1)
-            continue
+def get_latest_frames():
+    """Get all frames from frames_in sorted by timestamp."""
+    files = sorted(
+        [f for f in os.listdir(FRAME_FOLDER) if f.endswith(".jpg")],
+        key=lambda x: os.path.getmtime(os.path.join(FRAME_FOLDER, x))
+    )
+    return [os.path.join(FRAME_FOLDER, f) for f in files]
 
-        # only process new frames
-        fid = int(os.path.splitext(os.path.basename(frame_path))[0].split("_")[1])
-        if fid <= last_sent:
-            time.sleep(0.05)
-            continue
-        last_sent = fid
 
-        # read telemetry
-        telemetry = {}
-        try:
-            with open(TELEMETRY_FILE, "r") as f:
-                telemetry = json.load(f)
-        except:
-            telemetry = {"lat":None,"lon":None,"alt":None,"timestamp":time.time()}
+def infer_and_send(frame_path):
+    """Run YOLO on frame and send to server."""
+    # Extract drone_id and frame_id from filename pattern overlay_<timestamp>_<frame>.jpg
+    fname = os.path.basename(frame_path)
+    drone_id = "Unknown"
+    if "Drone-" in fname:
+        parts = fname.split("_")
+        drone_id = parts[0].replace("overlay_", "")
+    frame_id = int(time.time())
 
-        img = cv2.imread(frame_path)
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = model.predict(source=img_rgb, conf=0.35, imgsz=640, device="cpu")  # set device appropriately
+    # Load telemetry if available
+    telemetry_path = os.path.splitext(frame_path)[0] + "_telemetry.json"
+    if os.path.exists(telemetry_path):
+        with open(telemetry_path, "r") as f:
+            telemetry = json.load(f)
+    else:
+        telemetry = {"lat": None, "lon": None, "alt": None, "drone_id": drone_id, "timestamp": time.time()}
 
-        detections = []
-        # parse results: ultralytics returns a list of Results
-        for r in results:
-            boxes = getattr(r, "boxes", None)
-            if boxes is None: continue
-            for b in boxes:
-                conf = float(b.conf[0])
-                cls = int(b.cls[0])
-                # only person class (COCO id 0 usually)
-                if cls != 0:
-                    continue
-                x1,y1,x2,y2 = map(int, b.xyxy[0].tolist())
-                detections.append({"xyxy":[x1,y1,x2,y2],"conf":conf,"class":"person"})
+    # Read frame
+    img = cv2.imread(frame_path)
+    if img is None:
+        return
 
-                # draw box on img
-                cv2.rectangle(img, (x1,y1),(x2,y2),(0,255,0),2)
-                cv2.putText(img, f"person {conf:.2f}", (x1,y1-6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255),1)
+    # YOLO detection
+    results = model.predict(source=img, conf=0.35, imgsz=640, device="cpu", verbose=False)
+    detections = []
+    for r in results:
+        for b in r.boxes:
+            conf = float(b.conf[0])
+            cls = int(b.cls[0])
+            class_name = model.names[cls]
+            if class_name not in TARGET_CLASSES:
+                continue
+            x1, y1, x2, y2 = map(int, b.xyxy[0].tolist())
+            detections.append({
+                "xyxy": [x1, y1, x2, y2],
+                "conf": conf,
+                "class": class_name
+            })
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(img, f"{class_name} {conf:.2f}", (x1, y1 - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-        # save overlay frame to OUT_FOLDER
-        outpath = os.path.join(OUT_FOLDER, f"overlay_{fid:06d}.jpg")
-        cv2.imwrite(outpath, img, [int(cv2.IMWRITE_JPEG_QUALITY),85])
+    # Save overlay
+    overlay_name = f"{drone_id}_overlay_{int(time.time())}.jpg"
+    out_path = os.path.join(OUT_FOLDER, overlay_name)
+    cv2.imwrite(out_path, img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
 
-        # encode overlay as base64 to emit
-        with open(outpath, "rb") as f:
-            jpg_b64 = base64.b64encode(f.read()).decode('utf-8')
+    # Encode to base64
+    with open(out_path, "rb") as f:
+        jpg_b64 = base64.b64encode(f.read()).decode("utf-8")
 
-        payload = {
-            "frame_id": fid,
-            "timestamp": telemetry.get("timestamp", time.time()),
-            "telemetry": telemetry,
-            "detections": detections,
-            "image_b64": jpg_b64
-        }
-        # emit over socket.io
-        sio.emit("detection", payload, namespace="/")
-        print(f"Sent frame {fid} detections: {len(detections)}")
+    # Payload for Flask server
+    payload = {
+        "frame_id": frame_id,
+        "timestamp": telemetry.get("timestamp", time.time()),
+        "telemetry": telemetry,
+        "detections": detections,
+        "image_b64": jpg_b64
+    }
 
-        time.sleep(0.05)
+    # Emit detection event
+    sio.emit("detection", payload, namespace="/")
+    print(f"📤 Sent frame {frame_id} from {drone_id} ({len(detections)} detections)")
 
-except KeyboardInterrupt:
-    print("Exiting detector")
-finally:
+    # Optional alert if a person is found
+    if any(d["class"] == "person" for d in detections):
+        print(f"⚠️ ALERT: Person detected by {drone_id}!")
+
+
+if __name__ == "__main__":
+    print("🚀 YOLO Detector Client Started...")
+    processed = set()
+
     try:
+        while True:
+            frames = get_latest_frames()
+            for f in frames:
+                if f not in processed:
+                    infer_and_send(f)
+                    processed.add(f)
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("🛑 Detector stopped.")
+    finally:
         sio.disconnect()
-    except:
-        pass
